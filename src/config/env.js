@@ -41,6 +41,21 @@ const uploadsDir = path.resolve(process.env.UPLOADS_DIR || path.join(process.cwd
 const cashProMonthlyCop = toInt(process.env.CASHPRO_MONTHLY_COP, 15000)
 const cashProSemesterCop = toInt(process.env.CASHPRO_SEMESTER_COP, 81000)
 const cashProAnnualCop = toInt(process.env.CASHPRO_ANNUAL_COP, 144000)
+const wompiEnv = String(process.env.WOMPI_ENV || (process.env.NODE_ENV === 'production' ? 'prod' : 'test'))
+  .trim()
+  .toLowerCase() === 'prod' ? 'prod' : 'test'
+const wompiProdPublicKey = String(process.env.WOMPI_PROD_PUBLIC_KEY || process.env.WOMPI_PUBLIC_KEY || '').trim()
+const wompiProdPrivateKey = String(process.env.WOMPI_PROD_PRIVATE_KEY || process.env.WOMPI_PRIVATE_KEY || '').trim()
+const wompiProdIntegritySecret = String(process.env.WOMPI_PROD_INTEGRITY_SECRET || process.env.WOMPI_INTEGRITY_SECRET || '').trim()
+const wompiProdWebhookSecret = String(process.env.WOMPI_PROD_WEBHOOK_SECRET || process.env.WOMPI_WEBHOOK_SECRET || '').trim()
+const wompiTestPublicKey = String(process.env.WOMPI_TEST_PUBLIC_KEY || '').trim()
+const wompiTestPrivateKey = String(process.env.WOMPI_TEST_PRIVATE_KEY || '').trim()
+const wompiTestIntegritySecret = String(process.env.WOMPI_TEST_INTEGRITY_SECRET || '').trim()
+const wompiTestWebhookSecret = String(process.env.WOMPI_TEST_WEBHOOK_SECRET || '').trim()
+const wompiActivePublicKey = wompiEnv === 'test' ? wompiTestPublicKey : wompiProdPublicKey
+const wompiActivePrivateKey = wompiEnv === 'test' ? wompiTestPrivateKey : wompiProdPrivateKey
+const wompiActiveIntegritySecret = wompiEnv === 'test' ? wompiTestIntegritySecret : wompiProdIntegritySecret
+const wompiActiveWebhookSecret = wompiEnv === 'test' ? wompiTestWebhookSecret : wompiProdWebhookSecret
 
 module.exports = {
   port: toInt(process.env.PORT, 4100),
@@ -72,10 +87,11 @@ module.exports = {
   firebaseServiceAccountJson: process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '',
   firebaseServiceAccountFile: process.env.FIREBASE_SERVICE_ACCOUNT_FILE || '',
   frontendAppUrl: String(process.env.FRONTEND_APP_URL || 'https://matucash.com').trim().replace(/\/+$/, ''),
-  wompiPublicKey: process.env.WOMPI_PUBLIC_KEY || '',
-  wompiPrivateKey: process.env.WOMPI_PRIVATE_KEY || '',
-  wompiIntegritySecret: process.env.WOMPI_INTEGRITY_SECRET || '',
-  wompiWebhookSecret: process.env.WOMPI_WEBHOOK_SECRET || '',
+  wompiEnv,
+  wompiPublicKey: wompiActivePublicKey,
+  wompiPrivateKey: wompiActivePrivateKey,
+  wompiIntegritySecret: wompiActiveIntegritySecret,
+  wompiWebhookSecret: wompiActiveWebhookSecret,
   wompiBaseUrl: String(process.env.WOMPI_BASE_URL || 'https://production.wompi.co/v1').trim().replace(/\/+$/, ''),
   wompiTestBaseUrl: String(process.env.WOMPI_TEST_BASE_URL || 'https://sandbox.wompi.co/v1').trim().replace(/\/+$/, ''),
   cashProMonthlyCop,

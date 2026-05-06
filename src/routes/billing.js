@@ -1,6 +1,6 @@
 const express = require('express')
 const logger = require('../lib/logger')
-const { buildCheckoutUrl, getTransaction, PLAN_CODE, normalizePeriod } = require('../services/wompi')
+const { buildCheckoutUrl, getTransaction, PLAN_CODE, normalizePeriod, normalizePlanCode, SUPPORTED_PLAN_CODES } = require('../services/wompi')
 const {
   markPendingPayment,
   activateSubscription,
@@ -20,15 +20,15 @@ function referenceToUid(reference) {
   const parts = raw.split('_')
   // Compatibilidad con referencias antiguas: cashpro_<uid>_<timestamp>
   if (parts.length === 3) return parts.slice(1, -1).join('_')
-  if (parts.length < 4) return ''
-  return parts.slice(2, -1).join('_')
+  if (parts.length < 5) return ''
+  return parts.slice(3, -1).join('_')
 }
 
 function referenceToPeriod(reference) {
   const raw = String(reference || '').trim()
   if (!raw.startsWith(`${PLAN_CODE}_`)) return 'monthly'
   const parts = raw.split('_')
-  if (parts.length < 4) return 'monthly'
+  if (parts.length < 5) return 'monthly'
   return normalizePeriod(parts[1])
 }
 
@@ -39,13 +39,25 @@ router.post('/checkout-link', async (req, res) => {
   const phone = String(req.body?.phone || '').trim()
   const redirectUrl = String(req.body?.redirectUrl || '').trim()
   const planPeriod = normalizePeriod(req.body?.planPeriod)
+  const planCode = String(req.body?.planCode || '').trim().toLowerCase()
 
   if (!uid || !email) {
     return res.status(400).json({ ok: false, error: 'uid y email son requeridos' })
   }
+  if (planCode === 'enterprise_contact') {
+    return res.status(422).json({
+      ok: false,
+      error: 'El plan enterprise se gestiona por contacto comercial.',
+      data: { contactUrl: 'mailto:sales@matuai.com?subject=Plan%20Enterprise%20MatuAI' }
+    })
+  }
+  const normalizedPlanCode = normalizePlanCode(planCode)
+  if (!SUPPORTED_PLAN_CODES.includes(normalizedPlanCode)) {
+    return res.status(400).json({ ok: false, error: 'Plan no soportado para checkout' })
+  }
 
   try {
-    const payload = buildCheckoutUrl({ uid, email, fullName, phone, redirectUrl, planPeriod })
+    const payload = buildCheckoutUrl({ uid, email, fullName, phone, redirectUrl, planPeriod, planCode: normalizedPlanCode })
     await markPendingPayment({ uid, email, fullName, reference: payload.reference })
     return res.json({ ok: true, data: payload })
   } catch (err) {
