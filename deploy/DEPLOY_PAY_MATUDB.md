@@ -60,6 +60,19 @@ pm2 logs matupay-api --lines 50
 pm2 save
 ```
 
+Tras `git pull`, reinicia **con el ecosystem** (no solo el nombre):
+
+```bash
+cd ~/apps/MatuPayBakend
+git pull origin main
+npm run pm2:restart
+# equivalente:
+# pm2 restart ecosystem.config.cjs --env production
+pm2 save
+```
+
+> `pm2 restart matupay-api --env production` **no aplica** `env_production` sin el archivo ecosystem.
+
 ## 4. Nginx
 
 ```bash
