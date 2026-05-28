@@ -86,7 +86,7 @@ INSERT INTO payment_apps (
   'Winquina',
   TRUE,
   'https://winquina.com',
-  ARRAY['https://winquina.com', 'https://www.winquina.com', 'http://localhost:5173'],
+  ARRAY['https://winquina.com', 'https://www.winquina.com', 'http://localhost:5173', 'https://matudb.com'],
   'wompi',
   'test',
   'Winquina'

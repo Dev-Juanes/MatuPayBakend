@@ -25,8 +25,17 @@ app.use(
       return callback(new Error(`CORS bloqueado para origin: ${origin}`))
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Payment-App'],
-    credentials: false
+    // Refleja los headers del preflight (x-payment-app, authorization, etc.)
+    allowedHeaders: (req, callback) => {
+      const requested = req.header('access-control-request-headers')
+      callback(
+        null,
+        requested ||
+          'Content-Type, Authorization, Accept, X-Payment-App, x-payment-app'
+      )
+    },
+    credentials: false,
+    maxAge: 86400
   })
 )
 app.use(express.json({ limit: '1mb' }))

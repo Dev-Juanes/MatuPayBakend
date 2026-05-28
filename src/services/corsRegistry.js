@@ -4,7 +4,16 @@ const logger = require('../lib/logger')
 
 const normalizeOrigin = (origin) => String(origin || '').trim().replace(/\/+$/, '')
 
-let allowedOrigins = new Set(env.corsOrigins.map(normalizeOrigin))
+const defaultOrigins = [
+  'http://localhost:5173',
+  'https://winquina.com',
+  'https://www.winquina.com'
+]
+
+let allowedOrigins = new Set([
+  ...defaultOrigins.map(normalizeOrigin),
+  ...env.corsOrigins.map(normalizeOrigin)
+])
 
 async function refreshAllowedOrigins() {
   try {
