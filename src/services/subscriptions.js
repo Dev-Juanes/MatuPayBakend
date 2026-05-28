@@ -30,9 +30,9 @@ async function upsertSubscription(row) {
   if (existing) {
     const { error } = await db
       .from('payment_subscriptions')
-      .update(row)
       .eq('app_slug', row.app_slug)
       .eq('customer_uid', row.customer_uid)
+      .update(row)
     if (error) throw new Error(error.message || 'No se pudo actualizar suscripción')
     return
   }
