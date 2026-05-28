@@ -73,14 +73,40 @@ pm2 save
 
 > `pm2 restart matupay-api --env production` **no aplica** `env_production` sin el archivo ecosystem.
 
-## 4. Nginx
+## 4. Nginx (conflicto con `*.matudb.com`)
+
+En el VPS, **matudb-api** suele usar `server_name *.matudb.com` → puerto **3004**.
+Si `pay.matudb.com` no tiene su propio bloque **443**, HTTPS cae en MatuDB y verás CORS con `apikey`, no `x-payment-app`.
 
 ```bash
+# 1) MatuPay responde en local
+curl -s http://127.0.0.1:4102/api/health
+# → {"ok":true,"service":"matupay-api",...}
+
 sudo cp deploy/nginx/pay-matudb.conf /etc/nginx/sites-available/pay-matudb.conf
-sudo ln -sf /etc/nginx/sites-available/pay-matudb.conf /etc/nginx/sites-enabled/
+sudo ln -sf /etc/nginx/sites-available/pay-matudb.conf /etc/nginx/sites-enabled/pay-matudb.conf
 sudo nginx -t
 sudo systemctl reload nginx
 ```
+
+Si no existen certificados SSL para pay:
+
+```bash
+sudo certbot --nginx -d pay.matudb.com
+```
+
+Comprueba que **HTTPS** ya es MatuPay:
+
+```bash
+curl -s https://pay.matudb.com/api/health
+curl -s -X OPTIONS https://pay.matudb.com/api/billing/plans \
+  -H "Origin: https://winquina.com" \
+  -H "Access-Control-Request-Method: GET" \
+  -H "Access-Control-Request-Headers: authorization,x-payment-app" \
+  -D - -o /dev/null | grep -i access-control-allow-headers
+```
+
+Debe incluir `x-payment-app`, no solo `apikey`.
 
 ## 5. Probar **sin SSL** (mientras propagas DNS)
 
