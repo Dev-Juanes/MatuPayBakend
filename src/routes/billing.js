@@ -1,6 +1,9 @@
 const express = require('express')
 const logger = require('../lib/logger')
-const { buildCheckoutUrl, getTransaction, PLAN_CODE, normalizePeriod, normalizePlanCode, SUPPORTED_PLAN_CODES } = require('../services/wompi')
+const { REF_SEP } = require('../gateways/wompi/checkout')
+const { sendPaymentInvoice } = require('../invoicing/mailer')
+const { resolvePaymentApp } = require('../middleware/resolvePaymentApp')
+const { getPaymentApp, buildGatewayForApp } = require('../services/paymentApps')
 const {
   markPendingPayment,
   activateSubscription,
@@ -10,27 +13,72 @@ const {
 
 const router = express.Router()
 
+router.use((req, res, next) => {
+  if (req.path === '/webhook/wompi') return next()
+  return resolvePaymentApp(req, res, next)
+})
+
 function sanitizeUid(uid) {
   return String(uid || '').trim()
 }
 
-function referenceToUid(reference) {
-  const raw = String(reference || '').trim()
-  if (!raw.startsWith(`${PLAN_CODE}_`)) return ''
-  const parts = raw.split('_')
-  // Compatibilidad con referencias antiguas: cashpro_<uid>_<timestamp>
-  if (parts.length === 3) return parts.slice(1, -1).join('_')
-  if (parts.length < 5) return ''
-  return parts.slice(3, -1).join('_')
+function appSlug(req) {
+  return req.paymentApp.slug
 }
 
-function referenceToPeriod(reference) {
+function parseAppIdFromReference(reference) {
   const raw = String(reference || '').trim()
-  if (!raw.startsWith(`${PLAN_CODE}_`)) return 'monthly'
-  const parts = raw.split('_')
-  if (parts.length < 5) return 'monthly'
-  return normalizePeriod(parts[1])
+  if (!raw) return ''
+  if (raw.includes(REF_SEP)) return raw.split(REF_SEP)[0]
+  return raw.split('_')[0] || ''
 }
+
+async function handleApprovedPayment({ req, uid, transactionId, reference, email, fullName }) {
+  const gateway = req.paymentGateway
+  const parsed = gateway.parsePaymentReference(reference)
+  const plan = parsed ? gateway.getPlan(parsed.planId) : null
+  const app = req.paymentApp
+
+  const subscription = await activateSubscription({
+    appSlug: app.slug,
+    uid,
+    transactionId,
+    reference,
+    planPeriod: plan?.period,
+    amountCop: plan?.amountCop,
+    gateway
+  })
+
+  try {
+    await sendPaymentInvoice({
+      to: email,
+      customerName: fullName,
+      planId: subscription.planId,
+      amountCop: subscription.amountCop,
+      transactionId,
+      reference,
+      paidAtMs: Date.now(),
+      brandName: app.invoiceBrandName
+    })
+  } catch (err) {
+    logger.warn('No se pudo enviar comprobante por correo', { message: err.message, uid })
+  }
+
+  return subscription
+}
+
+router.get('/plans', (req, res) => {
+  const gateway = req.paymentGateway
+  return res.json({
+    ok: true,
+    data: {
+      appId: appSlug(req),
+      gateway: gateway.name,
+      environment: gateway.environment,
+      plans: gateway.listPlans()
+    }
+  })
+})
 
 router.post('/checkout-link', async (req, res) => {
   const uid = sanitizeUid(req.body?.uid)
@@ -38,30 +86,38 @@ router.post('/checkout-link', async (req, res) => {
   const fullName = String(req.body?.fullName || '').trim()
   const phone = String(req.body?.phone || '').trim()
   const redirectUrl = String(req.body?.redirectUrl || '').trim()
-  const planPeriod = normalizePeriod(req.body?.planPeriod)
-  const planCode = String(req.body?.planCode || '').trim().toLowerCase()
+  const planId = String(req.body?.planId || req.body?.planCode || '').trim().toLowerCase()
 
   if (!uid || !email) {
     return res.status(400).json({ ok: false, error: 'uid y email son requeridos' })
   }
-  if (planCode === 'enterprise_contact') {
-    return res.status(422).json({
-      ok: false,
-      error: 'El plan enterprise se gestiona por contacto comercial.',
-      data: { contactUrl: 'mailto:sales@matuai.com?subject=Plan%20Enterprise%20MatuAI' }
-    })
-  }
-  const normalizedPlanCode = normalizePlanCode(planCode)
-  if (!SUPPORTED_PLAN_CODES.includes(normalizedPlanCode)) {
-    return res.status(400).json({ ok: false, error: 'Plan no soportado para checkout' })
+  if (!planId) {
+    return res.status(400).json({ ok: false, error: 'planId es requerido' })
   }
 
   try {
-    const payload = buildCheckoutUrl({ uid, email, fullName, phone, redirectUrl, planPeriod, planCode: normalizedPlanCode })
-    await markPendingPayment({ uid, email, fullName, reference: payload.reference })
+    const gateway = req.paymentGateway
+    const app = req.paymentApp
+    const payload = gateway.createCheckout({
+      customerId: uid,
+      planId,
+      redirectUrl: redirectUrl || `${app.frontendUrl}/billing/return`,
+      email,
+      fullName,
+      phone
+    })
+
+    await markPendingPayment({
+      appSlug: app.slug,
+      uid,
+      email,
+      fullName,
+      reference: payload.reference,
+      gateway
+    })
     return res.json({ ok: true, data: payload })
   } catch (err) {
-    logger.error('Error creando checkout Wompi', { message: err.message })
+    logger.error('Error creando checkout', { message: err.message, appId: appSlug(req) })
     return res.status(500).json({ ok: false, error: err.message || 'No se pudo crear el checkout' })
   }
 })
@@ -69,23 +125,34 @@ router.post('/checkout-link', async (req, res) => {
 router.post('/confirm-transaction', async (req, res) => {
   const uid = sanitizeUid(req.body?.uid)
   const transactionId = String(req.body?.transactionId || '').trim()
+  const email = String(req.body?.email || '').trim()
+  const fullName = String(req.body?.fullName || '').trim()
   const environment = String(req.body?.environment || '').trim().toLowerCase()
+
   if (!uid || !transactionId) {
     return res.status(400).json({ ok: false, error: 'uid y transactionId son requeridos' })
   }
 
   try {
-    const tx = await getTransaction(transactionId, { environment })
+    const gateway = req.paymentGateway
+    const tx = await gateway.fetchTransaction(transactionId, { environment })
     const reference = String(tx?.reference || '')
-    const ownerUid = referenceToUid(reference)
-    if (!ownerUid || ownerUid !== uid) {
+    const parsed = gateway.parsePaymentReference(reference)
+
+    if (!parsed || parsed.customerId !== uid) {
       return res.status(403).json({ ok: false, error: 'Transacción inválida para este usuario' })
     }
 
     const status = String(tx?.status || '').toUpperCase()
     if (status === 'APPROVED') {
-      const period = referenceToPeriod(reference)
-      const subscription = await activateSubscription({ uid, transactionId, reference, planPeriod: period })
+      const subscription = await handleApprovedPayment({
+        req,
+        uid,
+        transactionId,
+        reference,
+        email,
+        fullName
+      })
       return res.json({
         ok: true,
         data: {
@@ -95,7 +162,7 @@ router.post('/confirm-transaction', async (req, res) => {
       })
     }
 
-    await markPaymentIssue({ uid, reason: `Estado en Wompi: ${status || 'UNKNOWN'}` })
+    await markPaymentIssue({ appSlug: appSlug(req), uid, reason: `Estado en pasarela: ${status || 'UNKNOWN'}` })
     return res.json({
       ok: true,
       data: {
@@ -104,8 +171,64 @@ router.post('/confirm-transaction', async (req, res) => {
       }
     })
   } catch (err) {
-    logger.error('Error confirmando pago Wompi', { message: err.message })
+    logger.error('Error confirmando pago', { message: err.message, appId: appSlug(req) })
     return res.status(500).json({ ok: false, error: err.message || 'No se pudo confirmar la transacción' })
+  }
+})
+
+router.post('/webhook/wompi', async (req, res) => {
+  try {
+    const payload = req.body || {}
+    const event = require('../gateways/wompi/webhooks').extractTransactionFromEvent(payload)
+    const reference = String(event?.reference || '')
+    const appId = parseAppIdFromReference(reference)
+
+    if (!appId) {
+      return res.status(400).json({ ok: false, error: 'Referencia sin appId' })
+    }
+
+    const app = await getPaymentApp(appId)
+    if (!app) {
+      return res.status(404).json({ ok: false, error: `App no registrada: ${appId}` })
+    }
+
+    const gateway = buildGatewayForApp(app)
+    req.paymentApp = app
+    req.paymentGateway = gateway
+
+    if (!gateway.verifyWebhook(payload)) {
+      return res.status(401).json({ ok: false, error: 'Webhook inválido' })
+    }
+
+    if (!event?.transactionId || !event.reference) {
+      return res.status(400).json({ ok: false, error: 'Evento incompleto' })
+    }
+
+    const parsed = gateway.parsePaymentReference(event.reference)
+    if (!parsed?.customerId) {
+      return res.status(400).json({ ok: false, error: 'Referencia no reconocida' })
+    }
+
+    if (event.status === 'APPROVED') {
+      await handleApprovedPayment({
+        req,
+        uid: parsed.customerId,
+        transactionId: event.transactionId,
+        reference: event.reference,
+        email: event.customerEmail
+      })
+    } else {
+      await markPaymentIssue({
+        appSlug: app.slug,
+        uid: parsed.customerId,
+        reason: `Estado webhook: ${event.status || 'UNKNOWN'}`
+      })
+    }
+
+    return res.json({ ok: true })
+  } catch (err) {
+    logger.error('Error procesando webhook Wompi', { message: err.message })
+    return res.status(500).json({ ok: false, error: 'No se pudo procesar webhook' })
   }
 })
 
@@ -114,7 +237,7 @@ router.get('/status/:uid', async (req, res) => {
   if (!uid) return res.status(400).json({ ok: false, error: 'uid inválido' })
 
   try {
-    const data = await getSubscriptionStatus(uid)
+    const data = await getSubscriptionStatus(appSlug(req), uid)
     return res.json({ ok: true, data })
   } catch (err) {
     logger.error('Error consultando estado de suscripción', { message: err.message })

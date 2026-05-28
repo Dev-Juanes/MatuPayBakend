@@ -1,43 +1,71 @@
 {
-  "name": "matucashbakend",
-  "version": "1.0.0",
-  "description": "",
-  "main": "src/server.js",
-  "directories": {
-    "doc": "doc"
+  "name": "@devjuanes/matupay-backend",
+  "version": "3.0.1",
+  "description": "Backend modular de pasarelas de pago (Wompi) para múltiples aplicaciones. Librería + servidor HTTP.",
+  "main": "src/index.js",
+  "bin": {
+    "matupay-server": "bin/matupay-server.js"
   },
+  "exports": {
+    ".": "./src/index.js",
+    "./server": "./src/server.js"
+  },
+  "files": [
+    "src/",
+    "bin/",
+    "docs/",
+    "LICENSE",
+    ".env.example",
+    "README.md"
+  ],
   "scripts": {
     "test": "echo \"No tests yet\"",
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
-    "check": "node -e \"console.log('ok')\"",
+    "check": "node -e \"require('./src/index.js'); console.log('ok')\"",
+    "prepublishOnly": "npm run check",
     "pm2:start": "pm2 start ecosystem.config.cjs --env production",
     "pm2:restart": "pm2 restart ecosystem.config.cjs --env production",
-    "pm2:logs": "pm2 logs matucash-whatsapp-api",
+    "pm2:logs": "pm2 logs matupay-api",
     "pm2:save": "pm2 save"
   },
-  "nodemonConfig": {
-    "ignore": [
-      ".wwebjs_auth/**",
-      ".wwebjs_cache/**"
-    ]
-  },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "payments",
+    "payment-gateway",
+    "wompi",
+    "checkout",
+    "billing",
+    "subscriptions",
+    "colombia",
+    "cop",
+    "matudb",
+    "multi-tenant",
+    "express"
+  ],
+  "author": "Dev Juanes <https://github.com/Dev-Juanes>",
   "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dev-Juanes/MatuPayBakend.git"
+  },
+  "homepage": "https://github.com/Dev-Juanes/MatuPayBakend#readme",
+  "bugs": {
+    "url": "https://github.com/Dev-Juanes/MatuPayBakend/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "type": "commonjs",
   "dependencies": {
     "cors": "^2.8.6",
-    "date-fns": "^4.1.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "firebase-admin": "^13.8.0",
-    "multer": "^2.0.2",
-    "nodemailer": "^8.0.6",
-    "pdfkit": "^0.18.0",
-    "qrcode": "^1.5.4",
-    "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.34.6"
+    "@devjuanes/matuclient": "^2.2.3",
+    "nodemailer": "^8.0.6"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

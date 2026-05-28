@@ -1,5 +1,5 @@
-const path = require('path')
 const dotenv = require('dotenv')
+const { loadPlansFromEnv } = require('./plans')
 
 dotenv.config()
 
@@ -21,29 +21,16 @@ function splitCsv(value) {
     .filter(Boolean)
 }
 
-const minDelay = toInt(process.env.MIN_SEND_DELAY_MS, 8000)
-const maxDelay = toInt(process.env.MAX_SEND_DELAY_MS, 22000)
-const preSendMin = toInt(process.env.PRE_SEND_DELAY_MIN_MS, 400)
-const preSendMax = toInt(process.env.PRE_SEND_DELAY_MAX_MS, 2200)
-const typingMin = toInt(process.env.TYPING_DURATION_MIN_MS, 1200)
-const typingMax = toInt(process.env.TYPING_DURATION_MAX_MS, 12000)
-const typingBase = toInt(process.env.TYPING_BASE_MS, 600)
-const typingPerChar = toInt(process.env.TYPING_MS_PER_CHAR, 28)
-const typingJitter = toInt(process.env.TYPING_JITTER_MS, 900)
-const loanCreatedCooldown = toInt(process.env.NOTIF_COOLDOWN_LOAN_CREATED_MS, 6 * 60 * 60 * 1000)
-const paymentCooldown = toInt(process.env.NOTIF_COOLDOWN_PAYMENT_MS, 90 * 1000)
-const overdueCooldown = toInt(process.env.NOTIF_COOLDOWN_OVERDUE_MS, 24 * 60 * 60 * 1000)
 const corsOrigins = splitCsv(
-  process.env.CORS_ORIGIN || 'https://matucash.com,https://www.matucash.com,http://localhost:5173'
+  process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:3000'
 )
-const maxUploadMb = Math.min(25, Math.max(1, toInt(process.env.MAX_UPLOAD_MB, 6)))
-const uploadsDir = path.resolve(process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads'))
-const cashProMonthlyCop = toInt(process.env.CASHPRO_MONTHLY_COP, 15000)
-const cashProSemesterCop = toInt(process.env.CASHPRO_SEMESTER_COP, 81000)
-const cashProAnnualCop = toInt(process.env.CASHPRO_ANNUAL_COP, 144000)
+
 const wompiEnv = String(process.env.WOMPI_ENV || (process.env.NODE_ENV === 'production' ? 'prod' : 'test'))
   .trim()
-  .toLowerCase() === 'prod' ? 'prod' : 'test'
+  .toLowerCase() === 'prod'
+  ? 'prod'
+  : 'test'
+
 const wompiProdPublicKey = String(process.env.WOMPI_PROD_PUBLIC_KEY || process.env.WOMPI_PUBLIC_KEY || '').trim()
 const wompiProdPrivateKey = String(process.env.WOMPI_PROD_PRIVATE_KEY || process.env.WOMPI_PRIVATE_KEY || '').trim()
 const wompiProdIntegritySecret = String(process.env.WOMPI_PROD_INTEGRITY_SECRET || process.env.WOMPI_INTEGRITY_SECRET || '').trim()
@@ -52,55 +39,73 @@ const wompiTestPublicKey = String(process.env.WOMPI_TEST_PUBLIC_KEY || '').trim(
 const wompiTestPrivateKey = String(process.env.WOMPI_TEST_PRIVATE_KEY || '').trim()
 const wompiTestIntegritySecret = String(process.env.WOMPI_TEST_INTEGRITY_SECRET || '').trim()
 const wompiTestWebhookSecret = String(process.env.WOMPI_TEST_WEBHOOK_SECRET || '').trim()
-const wompiActivePublicKey = wompiEnv === 'test' ? wompiTestPublicKey : wompiProdPublicKey
-const wompiActivePrivateKey = wompiEnv === 'test' ? wompiTestPrivateKey : wompiProdPrivateKey
-const wompiActiveIntegritySecret = wompiEnv === 'test' ? wompiTestIntegritySecret : wompiProdIntegritySecret
-const wompiActiveWebhookSecret = wompiEnv === 'test' ? wompiTestWebhookSecret : wompiProdWebhookSecret
 
-module.exports = {
+const cashProMonthlyCop = toInt(process.env.CASHPRO_MONTHLY_COP, 15000)
+const cashProSemesterCop = toInt(process.env.CASHPRO_SEMESTER_COP, 81000)
+const cashProAnnualCop = toInt(process.env.CASHPRO_ANNUAL_COP, 144000)
+
+const paymentPlans = loadPlansFromEnv({
+  paymentPlansJson: process.env.PAYMENT_PLANS_JSON,
+  cashProMonthlyCop,
+  cashProAnnualCop
+})
+
+const env = {
   port: toInt(process.env.PORT, 4100),
   nodeEnv: process.env.NODE_ENV || 'development',
-  corsOrigins: corsOrigins.length ? corsOrigins : ['https://matucash.com', 'https://www.matucash.com', 'http://localhost:5173'],
+  corsOrigins: corsOrigins.length ? corsOrigins : ['http://localhost:5173'],
   apiToken: process.env.API_TOKEN || '',
-  uploadsDir,
-  maxUploadMb,
-  maxUploadBytes: maxUploadMb * 1024 * 1024,
-  defaultCountryCode: process.env.DEFAULT_COUNTRY_CODE || '57',
-  whatsappClientId: process.env.WHATSAPP_CLIENT_ID || 'matucash-main',
-  minSendDelayMs: Math.max(2000, Math.min(minDelay, maxDelay)),
-  maxSendDelayMs: Math.max(minDelay, maxDelay),
-  preSendDelayMinMs: Math.max(0, Math.min(preSendMin, preSendMax)),
-  preSendDelayMaxMs: Math.max(preSendMin, preSendMax),
-  typingMinMs: Math.max(300, Math.min(typingMin, typingMax)),
-  typingMaxMs: Math.max(typingMin, typingMax),
-  typingBaseMs: Math.max(0, typingBase),
-  typingMsPerChar: Math.max(0, typingPerChar),
-  typingJitterMs: Math.max(0, typingJitter),
-  notifCooldownLoanCreatedMs: Math.max(0, loanCreatedCooldown),
-  notifCooldownPaymentMs: Math.max(0, paymentCooldown),
-  notifCooldownOverdueMs: Math.max(0, overdueCooldown),
-  sendTicketMedia: toBool(process.env.SEND_TICKET_MEDIA, false),
-  simulateTyping: toBool(process.env.SIMULATE_TYPING, true),
-  headless: toBool(process.env.HEADLESS, true),
   trustProxy: toBool(process.env.TRUST_PROXY, true),
-  firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',
-  firebaseServiceAccountJson: process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '',
-  firebaseServiceAccountFile: process.env.FIREBASE_SERVICE_ACCOUNT_FILE || '',
-  frontendAppUrl: String(process.env.FRONTEND_APP_URL || 'https://matucash.com').trim().replace(/\/+$/, ''),
-  wompiEnv,
-  wompiPublicKey: wompiActivePublicKey,
-  wompiPrivateKey: wompiActivePrivateKey,
-  wompiIntegritySecret: wompiActiveIntegritySecret,
-  wompiWebhookSecret: wompiActiveWebhookSecret,
-  wompiBaseUrl: String(process.env.WOMPI_BASE_URL || 'https://production.wompi.co/v1').trim().replace(/\/+$/, ''),
-  wompiTestBaseUrl: String(process.env.WOMPI_TEST_BASE_URL || 'https://sandbox.wompi.co/v1').trim().replace(/\/+$/, ''),
+
+  paymentAppId: String(process.env.PAYMENT_APP_ID || process.env.APP_ID || 'matupay').trim(),
+  paymentGateway: String(process.env.PAYMENT_GATEWAY || 'wompi').trim().toLowerCase(),
+  paymentPlansJson: process.env.PAYMENT_PLANS_JSON || '',
+  paymentPlans,
   cashProMonthlyCop,
   cashProSemesterCop,
   cashProAnnualCop,
-  backupMailerHost: String(process.env.BACKUP_MAILER_HOST || 'smtp.gmail.com').trim(),
-  backupMailerPort: toInt(process.env.BACKUP_MAILER_PORT, 465),
-  backupMailerSecure: toBool(process.env.BACKUP_MAILER_SECURE, true),
-  backupMailerUser: String(process.env.BACKUP_MAILER_USER || '').trim(),
-  backupMailerPass: String(process.env.BACKUP_MAILER_PASS || '').trim(),
-  backupMailerFrom: String(process.env.BACKUP_MAILER_FROM || process.env.BACKUP_MAILER_USER || '').trim()
+
+  frontendAppUrl: String(process.env.FRONTEND_APP_URL || 'http://localhost:5173').trim().replace(/\/+$/, ''),
+
+  matudbUrl: String(process.env.MATUDB_URL || '').trim().replace(/\/+$/, ''),
+  matudbProjectId: String(process.env.MATUDB_PROJECT_ID || '').trim(),
+  matudbApiKey: String(process.env.MATUDB_API_KEY || '').trim(),
+  matudbUseSupabase: toBool(process.env.MATUDB_USE_SUPABASE, false),
+
+  wompiEnv,
+  wompiPublicKey: wompiEnv === 'test' ? wompiTestPublicKey : wompiProdPublicKey,
+  wompiPrivateKey: wompiEnv === 'test' ? wompiTestPrivateKey : wompiProdPrivateKey,
+  wompiIntegritySecret: wompiEnv === 'test' ? wompiTestIntegritySecret : wompiProdIntegritySecret,
+  wompiWebhookSecret: wompiEnv === 'test' ? wompiTestWebhookSecret : wompiProdWebhookSecret,
+  wompiBaseUrl: String(process.env.WOMPI_BASE_URL || 'https://production.wompi.co/v1').trim().replace(/\/+$/, ''),
+  wompiTestBaseUrl: String(process.env.WOMPI_TEST_BASE_URL || 'https://sandbox.wompi.co/v1').trim().replace(/\/+$/, ''),
+
+  invoiceMailerEnabled: toBool(process.env.INVOICE_MAILER_ENABLED, false),
+  invoiceMailerHost: String(process.env.INVOICE_MAILER_HOST || 'smtp.gmail.com').trim(),
+  invoiceMailerPort: toInt(process.env.INVOICE_MAILER_PORT, 465),
+  invoiceMailerSecure: toBool(process.env.INVOICE_MAILER_SECURE, true),
+  invoiceMailerUser: String(process.env.INVOICE_MAILER_USER || '').trim(),
+  invoiceMailerPass: String(process.env.INVOICE_MAILER_PASS || '').trim(),
+  invoiceMailerFrom: String(process.env.INVOICE_MAILER_FROM || process.env.INVOICE_MAILER_USER || '').trim(),
+  invoiceBrandName: String(process.env.INVOICE_BRAND_NAME || 'MatuPay').trim()
+}
+
+function buildGatewayConfigFromEnv(source = env) {
+  return {
+    environment: source.wompiEnv,
+    publicKey: source.wompiPublicKey,
+    privateKey: source.wompiPrivateKey,
+    integritySecret: source.wompiIntegritySecret,
+    webhookSecret: source.wompiWebhookSecret,
+    prodBaseUrl: source.wompiBaseUrl,
+    testBaseUrl: source.wompiTestBaseUrl,
+    appId: source.paymentAppId,
+    plans: source.paymentPlans,
+    defaultRedirectUrl: `${source.frontendAppUrl}/billing/return`
+  }
+}
+
+module.exports = {
+  ...env,
+  buildGatewayConfigFromEnv
 }

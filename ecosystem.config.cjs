@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: 'matucash-whatsapp-api',
+      name: 'matupay-api',
       script: 'src/server.js',
       cwd: __dirname,
       instances: 1,
@@ -10,7 +10,8 @@ module.exports = {
       watch: false,
       max_memory_restart: '500M',
       env: {
-        NODE_ENV: 'production'
+        NODE_ENV: 'production',
+        PORT: 4102
       },
       out_file: './logs/pm2-out.log',
       error_file: './logs/pm2-error.log',

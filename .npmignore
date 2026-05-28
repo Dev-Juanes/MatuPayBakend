@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+node_modules/
+logs/
+uploads/
+.wwebjs_auth/
+.wwebjs_cache/
+firebase-admin.json
+deploy/
+*.log
+.git/
+.gitignore
+.gitattributes
+ecosystem.config.cjs
+deploy.sh

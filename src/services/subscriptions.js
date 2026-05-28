@@ -1,6 +1,6 @@
-const { getAdminDb } = require('./firebaseAdmin')
-const { PLAN_CODE, normalizePeriod, PERIOD_MONTHS, amountForPeriod } = require('./wompi')
-const env = require('../config/env')
+const { normalizePeriod } = require('../config/plans')
+const { isMatuDbConfigured, getMatuDb } = require('./matudbClient')
+const logger = require('../lib/logger')
 
 function addMonthsMs(fromMs, months) {
   const d = new Date(fromMs)
@@ -8,125 +8,202 @@ function addMonthsMs(fromMs, months) {
   return d.getTime()
 }
 
-async function markPendingPayment({ uid, email, fullName, reference }) {
-  const db = getAdminDb()
-  const now = Date.now()
-  const period = normalizePeriod(String(reference || '').split('_')[1] || 'monthly')
-  const userRef = db.collection('users').doc(uid)
-  await userRef.set(
-    {
-      profile: {
-        email: String(email || '').trim(),
-        fullName: String(fullName || '').trim()
-      },
-      subscription: {
-        planCode: PLAN_CODE,
-        billingPeriod: period,
-        status: 'pending_payment',
-        currentAmountCop: amountForPeriod(period),
-        monthlyAmountCop: env.cashProMonthlyCop,
-        lastReference: reference,
-        updatedAtMs: now
-      }
-    },
-    { merge: true }
-  )
+function resolvePlanFromReference(reference, gateway) {
+  const parsed = gateway.parsePaymentReference(reference)
+  if (!parsed) return null
+  const plan = gateway.getPlan(parsed.planId)
+  if (!plan) return null
+  return { ...plan, customerId: parsed.customerId, appId: parsed.appId }
 }
 
-async function activateSubscription({ uid, transactionId, reference, planPeriod }) {
-  const db = getAdminDb()
-  const now = Date.now()
-  const period = normalizePeriod(planPeriod || String(reference || '').split('_')[1] || 'monthly')
-  const months = PERIOD_MONTHS[period] || 1
-  const userRef = db.collection('users').doc(uid)
-  const snap = await userRef.get()
+async function upsertSubscription(row) {
+  const db = getMatuDb()
+  const { data: existing, error: readErr } = await db
+    .from('payment_subscriptions')
+    .select('customer_uid')
+    .eq('app_slug', row.app_slug)
+    .eq('customer_uid', row.customer_uid)
+    .maybeSingle()
 
-  const previousEnd = Number(snap.get('subscription.currentPeriodEndMs') || 0)
+  if (readErr) throw new Error(readErr.message || 'No se pudo leer suscripción')
+
+  if (existing) {
+    const { error } = await db
+      .from('payment_subscriptions')
+      .update(row)
+      .eq('app_slug', row.app_slug)
+      .eq('customer_uid', row.customer_uid)
+    if (error) throw new Error(error.message || 'No se pudo actualizar suscripción')
+    return
+  }
+
+  const { error } = await db.from('payment_subscriptions').insert(row)
+  if (error) throw new Error(error.message || 'No se pudo crear suscripción')
+}
+
+async function insertPaymentRecord(row) {
+  const db = getMatuDb()
+  const { error } = await db.from('payment_records').insert(row)
+  if (error) throw new Error(error.message || 'No se pudo registrar el pago')
+}
+
+async function markPendingPayment({ appSlug, uid, email, fullName, reference, gateway }) {
+  if (!isMatuDbConfigured()) {
+    logger.warn('MatuDB no configurado: markPendingPayment omitido')
+    return
+  }
+  const now = Date.now()
+  const plan = resolvePlanFromReference(reference, gateway)
+  const period = normalizePeriod(plan?.period || 'monthly')
+
+  await upsertSubscription({
+    app_slug: appSlug,
+    customer_uid: uid,
+    plan_id: plan?.id || '',
+    billing_period: period,
+    status: 'pending_payment',
+    current_amount_cop: plan?.amountCop || 0,
+    last_reference: reference,
+    customer_email: String(email || '').trim(),
+    customer_name: String(fullName || '').trim(),
+    updated_at_ms: now
+  })
+}
+
+async function activateSubscription({
+  appSlug,
+  uid,
+  transactionId,
+  reference,
+  planPeriod,
+  amountCop,
+  gateway
+}) {
+  if (!isMatuDbConfigured()) {
+    throw new Error('MatuDB requerido para activar suscripciones')
+  }
+
+  const db = getMatuDb()
+  const now = Date.now()
+  const plan = resolvePlanFromReference(reference, gateway)
+  const period = normalizePeriod(planPeriod || plan?.period || 'monthly')
+  const months = plan?.periodMonths || (period === 'annual' ? 12 : 1)
+
+  const { data: existing } = await db
+    .from('payment_subscriptions')
+    .select('period_end_ms')
+    .eq('app_slug', appSlug)
+    .eq('customer_uid', uid)
+    .maybeSingle()
+
+  const previousEnd = Number(existing?.period_end_ms || 0)
   const periodStart = previousEnd > now ? previousEnd : now
   const periodEnd = addMonthsMs(periodStart, months)
+  const paidAmount = Number(amountCop || plan?.amountCop || 0)
 
-  await userRef.set(
-    {
-      subscription: {
-        planCode: PLAN_CODE,
-        billingPeriod: period,
-        status: 'active',
-        currentAmountCop: amountForPeriod(period),
-        monthlyAmountCop: env.cashProMonthlyCop,
-        currentPeriodStartMs: periodStart,
-        currentPeriodEndMs: periodEnd,
-        lastReference: reference,
-        lastTransactionId: transactionId,
-        updatedAtMs: now
-      }
-    },
-    { merge: true }
-  )
+  await upsertSubscription({
+    app_slug: appSlug,
+    customer_uid: uid,
+    plan_id: plan?.id || '',
+    billing_period: period,
+    status: 'active',
+    current_amount_cop: paidAmount,
+    period_start_ms: periodStart,
+    period_end_ms: periodEnd,
+    last_reference: reference,
+    last_transaction_id: String(transactionId || ''),
+    updated_at_ms: now
+  })
 
-  await userRef.collection('subscription_payments').doc(transactionId || `${now}`).set({
-    transactionId: String(transactionId || ''),
+  await insertPaymentRecord({
+    app_slug: appSlug,
+    customer_uid: uid,
+    transaction_id: String(transactionId || ''),
     reference: String(reference || ''),
-    billingPeriod: period,
-    amountCop: amountForPeriod(period),
-    paidAtMs: now
+    plan_id: plan?.id || '',
+    billing_period: period,
+    amount_cop: paidAmount,
+    status: 'approved',
+    wompi_status: 'APPROVED',
+    paid_at_ms: now
   })
 
   return {
     status: 'active',
-    periodEndMs: periodEnd
+    periodEndMs: periodEnd,
+    planId: plan?.id || '',
+    amountCop: paidAmount
   }
 }
 
-async function markPaymentIssue({ uid, reason }) {
-  const db = getAdminDb()
+async function markPaymentIssue({ appSlug, uid, reason }) {
+  if (!isMatuDbConfigured()) return
   const now = Date.now()
-  const userRef = db.collection('users').doc(uid)
-  await userRef.set(
-    {
-      subscription: {
-        planCode: PLAN_CODE,
-        status: 'past_due',
-        lastError: String(reason || '').slice(0, 180),
-        updatedAtMs: now
-      }
-    },
-    { merge: true }
-  )
+  await upsertSubscription({
+    app_slug: appSlug,
+    customer_uid: uid,
+    status: 'past_due',
+    last_error: String(reason || '').slice(0, 180),
+    updated_at_ms: now
+  })
 }
 
-async function getSubscriptionStatus(uid) {
-  const db = getAdminDb()
-  const userRef = db.collection('users').doc(uid)
-  const snap = await userRef.get()
-  const subscription = snap.get('subscription') || {}
-  const status = String(subscription.status || 'inactive')
-  const planCode = String(subscription.planCode || '')
-  const billingPeriod = normalizePeriod(subscription.billingPeriod || 'monthly')
-  const periodEndMs = Number(subscription.currentPeriodEndMs || 0)
-  const isActive = planCode === PLAN_CODE && status === 'active' && periodEndMs > Date.now()
-  const paymentsSnap = await userRef
-    .collection('subscription_payments')
-    .orderBy('paidAtMs', 'desc')
-    .limit(20)
-    .get()
-  const recentPayments = paymentsSnap.docs.map((doc) => {
-    const d = doc.data() || {}
+async function getSubscriptionStatus(appSlug, uid) {
+  if (!isMatuDbConfigured()) {
     return {
-      id: doc.id,
-      transactionId: String(d.transactionId || ''),
-      billingPeriod: normalizePeriod(d.billingPeriod || 'monthly'),
-      amountCop: Number(d.amountCop || 0),
-      paidAtMs: Number(d.paidAtMs || 0)
+      appId: appSlug,
+      planId: '',
+      billingPeriod: 'monthly',
+      status: 'inactive',
+      periodEndMs: 0,
+      currentAmountCop: 0,
+      recentPayments: [],
+      isActive: false
     }
-  })
+  }
+
+  const db = getMatuDb()
+  const { data: sub, error: subErr } = await db
+    .from('payment_subscriptions')
+    .select('*')
+    .eq('app_slug', appSlug)
+    .eq('customer_uid', uid)
+    .maybeSingle()
+
+  if (subErr) throw new Error(subErr.message || 'Error leyendo suscripción')
+
+  const subscription = sub || {}
+  const status = String(subscription.status || 'inactive')
+  const planId = String(subscription.plan_id || '')
+  const billingPeriod = normalizePeriod(subscription.billing_period || 'monthly')
+  const periodEndMs = Number(subscription.period_end_ms || 0)
+  const isActive = status === 'active' && periodEndMs > Date.now()
+
+  const { data: payments, error: payErr } = await db
+    .from('payment_records')
+    .select('id, transaction_id, billing_period, amount_cop, paid_at_ms, status')
+    .eq('app_slug', appSlug)
+    .eq('customer_uid', uid)
+    .order('paid_at_ms', { ascending: false })
+    .limit(20)
+
+  if (payErr) logger.warn('Error leyendo payment_records', { message: payErr.message })
+
+  const recentPayments = (payments || []).map((d) => ({
+    id: String(d.id || ''),
+    transactionId: String(d.transaction_id || ''),
+    billingPeriod: normalizePeriod(d.billing_period || 'monthly'),
+    amountCop: Number(d.amount_cop || 0),
+    paidAtMs: Number(d.paid_at_ms || 0)
+  }))
 
   return {
-    planCode,
+    appId: appSlug,
+    planId,
     billingPeriod,
     status: isActive ? 'active' : status,
     periodEndMs,
-    currentAmountCop: Number(subscription.currentAmountCop || amountForPeriod(billingPeriod)),
-    monthlyAmountCop: Number(subscription.monthlyAmountCop || env.cashProMonthlyCop),
+    currentAmountCop: Number(subscription.current_amount_cop || 0),
     recentPayments,
     isActive
   }
