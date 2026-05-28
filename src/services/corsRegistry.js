@@ -28,9 +28,17 @@ async function refreshAllowedOrigins() {
   }
 }
 
+function isLocalDevOrigin(origin) {
+  const o = normalizeOrigin(origin)
+  return /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(o)
+}
+
 function isOriginAllowed(origin) {
   if (!origin) return true
-  return allowedOrigins.has(normalizeOrigin(origin))
+  const o = normalizeOrigin(origin)
+  if (allowedOrigins.has(o)) return true
+  if (isLocalDevOrigin(o)) return true
+  return false
 }
 
 function startCorsRefresh(intervalMs = 60_000) {
