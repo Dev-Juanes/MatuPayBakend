@@ -2,11 +2,24 @@
 
 Un solo proceso PM2 (`matupay-api`) en el puerto **4102** (4100 suele estar ocupado por MatuCash).
 
-## 1. DNS
+## 1. DNS (obligatorio antes de Certbot)
 
-| Tipo | Host | Valor |
-|------|------|--------|
-| A | `pay` | IP pública del VPS |
+En el panel donde gestionas **matudb.com** (Cloudflare, Namecheap, etc.):
+
+| Tipo | Nombre / Host | Valor | TTL |
+|------|----------------|-------|-----|
+| **A** | `pay` | IP pública del VPS (la misma que `matudb.com`) | 300 o Auto |
+
+Comprueba propagación (desde tu PC o el servidor):
+
+```bash
+dig +short pay.matudb.com A
+# debe devolver la IP del VPS, no vacío
+```
+
+Si ves `NXDOMAIN` o sin respuesta, **no ejecutes certbot todavía**.
+
+> En Cloudflare: registro **DNS only** (nube gris) la primera vez suele ir mejor para Let's Encrypt.
 
 ## 2. Subir código
 
@@ -56,27 +69,47 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-## 5. SSL
+## 5. Probar **sin SSL** (mientras propagas DNS)
+
+```bash
+# API directa (PM2)
+curl -s http://127.0.0.1:4102/api/health
+
+# Nginx HTTP (puerto 80)
+curl -s -H "Host: pay.matudb.com" http://127.0.0.1/api/health
+```
+
+Si el primero responde `{"ok":true,...}` pero el segundo no, revisa nginx. Si ambos OK, MatuPay está bien; solo falta DNS/SSL.
+
+## 6. SSL (solo cuando `dig pay.matudb.com` devuelve tu IP)
 
 ```bash
 sudo certbot --nginx -d pay.matudb.com
 ```
 
-## 6. Verificar
+## 7. Verificar HTTPS
 
 ```bash
-curl https://pay.matudb.com/api/health
-curl -H "Authorization: Bearer $API_TOKEN" -H "X-Payment-App: winquina" \
+curl -s https://pay.matudb.com/api/health
+curl -s -H "Authorization: Bearer $API_TOKEN" -H "X-Payment-App: winquina" \
   https://pay.matudb.com/api/billing/plans
 ```
 
-## 7. Wompi
+### Errores frecuentes
+
+| Síntoma | Causa | Qué hacer |
+|---------|--------|-----------|
+| Certbot `NXDOMAIN` | No existe registro A `pay` | Crear DNS y esperar 5–30 min |
+| `SSL: no alternative certificate subject name` | HTTPS sin certificado para `pay` | No uses `https://` hasta certbot OK; prueba `http://127.0.0.1:4102` |
+| PM2 `Environment [production] is not defined` | Falta `env_production` en ecosystem | `git pull` y `pm2 restart matupay-api --env production` |
+
+## 8. Wompi
 
 Webhook (una URL para todas las apps):
 
 `https://pay.matudb.com/api/billing/webhook/wompi`
 
-## 8. Frontends (Winquina, etc.)
+## 9. Frontends (Winquina, etc.)
 
 ```env
 VITE_BILLING_API_URL=https://pay.matudb.com
@@ -87,7 +120,7 @@ VITE_BILLING_PLAN_ID=winquina_pro_monthly
 
 Cliente npm: `@devjuanes/matupay` → clase `MatuPayBilling`.
 
-## 9. Publicar npm
+## 10. Publicar npm
 
 ```bash
 # Backend
