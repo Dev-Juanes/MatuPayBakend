@@ -14,6 +14,7 @@ const {
 const router = express.Router()
 
 router.use((req, res, next) => {
+  if (req.method === 'OPTIONS') return next()
   if (req.path === '/webhook/wompi') return next()
   return resolvePaymentApp(req, res, next)
 })

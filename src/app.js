@@ -17,12 +17,38 @@ if (isMatuDbConfigured()) {
   startCorsRefresh()
 }
 
+const normalizeOrigin = (origin) => String(origin || '').trim().replace(/\/+$/, '')
+
+/** Preflight explícito — evita 401/404 antes de auth y billing */
+app.use((req, res, next) => {
+  if (req.method !== 'OPTIONS' || !req.path.startsWith('/api')) return next()
+
+  const origin = req.headers.origin
+  if (origin && !isOriginAllowed(origin)) {
+    return res.status(403).json({ ok: false, error: `CORS bloqueado para origin: ${origin}` })
+  }
+
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', normalizeOrigin(origin))
+    res.setHeader('Vary', 'Origin')
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS')
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    req.headers['access-control-request-headers'] ||
+      'Content-Type, Authorization, Accept, X-Payment-App, x-payment-app'
+  )
+  res.setHeader('Access-Control-Max-Age', '86400')
+  return res.status(204).end()
+})
+
 app.use(
   cors({
     origin(origin, callback) {
       if (!origin) return callback(null, true)
       if (isOriginAllowed(origin)) return callback(null, true)
-      return callback(new Error(`CORS bloqueado para origin: ${origin}`))
+      logger.warn('CORS origin no listado', { origin })
+      return callback(null, false)
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     // Refleja los headers del preflight (x-payment-app, authorization, etc.)
@@ -56,13 +82,6 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api', authMiddleware)
 app.use('/api/billing', billingRoutes)
-
-app.use((err, _req, res, next) => {
-  if (err && String(err.message || '').startsWith('CORS bloqueado')) {
-    return res.status(403).json({ ok: false, error: err.message })
-  }
-  return next(err)
-})
 
 app.use((err, _req, res, _next) => {
   logger.error('Unhandled error', { message: err.message, stack: err.stack })

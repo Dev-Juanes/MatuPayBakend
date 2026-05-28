@@ -14,6 +14,8 @@ function readAppId(req) {
 }
 
 async function resolvePaymentApp(req, res, next) {
+  if (req.method === 'OPTIONS') return next()
+
   const appId = readAppId(req) || env.paymentAppId
   if (!appId) {
     return res.status(400).json({
