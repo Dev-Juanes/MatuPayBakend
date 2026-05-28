@@ -1,6 +1,8 @@
 const env = require('../config/env')
 
 function authMiddleware(req, res, next) {
+  // Preflight CORS no lleva Authorization
+  if (req.method === 'OPTIONS') return next()
   if (req.path.startsWith('/billing/webhook/')) return next()
   if (!env.apiToken) return next()
 
